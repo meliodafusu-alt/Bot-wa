@@ -13,9 +13,11 @@ const rl = readline.createInterface({
 })
 
 // ======================
-// MENU STATE
+// STATE
 // ======================
 const menuState = {}
+const userTracker = {}
+const autoChats = {}
 
 async function startBot() {
 
@@ -33,7 +35,9 @@ async function startBot() {
 
     sock.ev.on("creds.update", saveCreds)
 
-    // 🔑 PAIRING CODE
+    // ======================
+    // PAIRING CODE
+    // ======================
     if (!sock.authState.creds.registered) {
 
         rl.question("Masukkan nomor (628xxx): ", async (nomor) => {
@@ -53,7 +57,9 @@ async function startBot() {
         })
     }
 
-    // 🔄 AUTO RECONNECT
+    // ======================
+    // RECONNECT
+    // ======================
     sock.ev.on("connection.update", (update) => {
 
         const { connection, lastDisconnect } = update
@@ -75,7 +81,9 @@ async function startBot() {
         }
     })
 
-    // 👋 WELCOME + SAYONARA
+    // ======================
+    // WELCOME / LEFT
+    // ======================
     sock.ev.on("group-participants.update", async (update) => {
 
         try {
@@ -108,13 +116,9 @@ async function startBot() {
         }
     })
 
-    // =====================================
-    // 🚫 ANTI SPAM + ANTI LINK
-    // =====================================
-
-    const userTracker = {}
-    const autoChats = {}
-
+    // ======================
+    // RESET PELANGGARAN
+    // ======================
     function setResetTimer(sender, from) {
 
         if (userTracker[sender]?.timer) {
@@ -123,11 +127,8 @@ async function startBot() {
 
         userTracker[sender].timer = setTimeout(async () => {
 
-            if (
-                userTracker[sender] &&
-                userTracker[sender].violations > 0 &&
-                userTracker[sender].violations < 5
-            ) {
+            if (userTracker[sender]?.violations > 0 &&
+                userTracker[sender].violations < 5) {
 
                 let namaUser = sender.split("@")[0]
 
@@ -139,7 +140,7 @@ async function startBot() {
                 }
 
                 await sock.sendMessage(from, {
-                    text: `woy @${namaUser} anak asu, sekarang pelanggaran kau udh gw hapus, lain kali jangan melanggar lagi ya anak anj`,
+                    text: `woy @${namaUser} anak asu, pelanggaran kamu direset`,
                     mentions: [sender]
                 })
             }
@@ -147,7 +148,9 @@ async function startBot() {
         }, 2 * 60 * 60 * 1000)
     }
 
-    // 📩 DETEKSI PESAN
+    // ======================
+    // MESSAGE HANDLER
+    // ======================
     sock.ev.on("messages.upsert", async ({ messages }) => {
 
         try {
@@ -173,9 +176,8 @@ async function startBot() {
                 text.includes("www.")
 
             // ======================
-            // 📋 MENU BOT
+            // MENU BOT
             // ======================
-
             if (text === ".menu") {
 
                 await sock.sendMessage(from, {
@@ -185,7 +187,7 @@ async function startBot() {
 1. info bot
 2. aturan
 
-Ketik angka (1 / 2)`
+Ketik 1 atau 2`
                 })
 
                 menuState[from] = true
@@ -194,28 +196,36 @@ Ketik angka (1 / 2)`
             if (menuState[from]) {
 
                 if (text === "1") {
-
                     await sock.sendMessage(from, { text: "1." })
                     delete menuState[from]
                 }
 
                 if (text === "2") {
-
                     await sock.sendMessage(from, { text: "2." })
                     delete menuState[from]
                 }
             }
 
             // ======================
-            // 📋 ABSEN (TAG ALL)
+            // 📋 ABSEN (ADMIN ONLY + TAG ALL)
             // ======================
-
             if (text === ".absen") {
 
                 try {
 
                     const metadata = await sock.groupMetadata(from)
                     const participants = metadata.participants
+
+                    const isAdmin = participants.some(p =>
+                        p.id === sender &&
+                        (p.admin === "admin" || p.admin === "superadmin")
+                    )
+
+                    if (!isAdmin) {
+                        return sock.sendMessage(from, {
+                            text: "❌ Perintah ini hanya untuk admin"
+                        })
+                    }
 
                     let mentions = []
                     let list = "📋 ABSEN GROUP:\n\n"
@@ -231,23 +241,17 @@ Ketik angka (1 / 2)`
 
                     await sock.sendMessage(from, {
                         text: list,
-                        mentions: mentions
+                        mentions
                     })
 
                 } catch (err) {
-
                     console.log("❌ Error absen:", err)
-
-                    await sock.sendMessage(from, {
-                        text: "❌ Gagal mengambil absen"
-                    })
                 }
             }
 
             // ======================
             // AUTO CHAT OWNER
             // ======================
-
             if (sender.startsWith("6281931965284")) {
 
                 if (text.startsWith(".set ")) {
@@ -287,11 +291,14 @@ Ketik angka (1 / 2)`
                     delete autoChats[removeText]
 
                     await sock.sendMessage(from, {
-                        text: `"${removeText}" berhasil dinonaktifkan`
+                        text: `"${removeText}" berhasil dimatikan`
                     })
                 }
             }
 
+            // ======================
+            // INIT USER
+            // ======================
             if (!userTracker[sender]) {
                 userTracker[sender] = {
                     count: 0,
@@ -301,7 +308,9 @@ Ketik angka (1 / 2)`
                 }
             }
 
+            // ======================
             // ANTI STICKER
+            // ======================
             if (isSticker) {
 
                 const now = Date.now()
@@ -319,10 +328,9 @@ Ketik angka (1 / 2)`
                     userTracker[sender].violations++
 
                     let namaUser = sender.split("@")[0]
-                    let jumlah = userTracker[sender].violations
 
                     await sock.sendMessage(from, {
-                        text: `woy @${namaUser} asu, please stop spam sticker 5× berturut2 ya anak anj, sekarang pelanggaran kamu:(${jumlah})`,
+                        text: `woy @${namaUser} asu, stop spam sticker`,
                         mentions: [sender]
                     })
 
@@ -333,7 +341,9 @@ Ketik angka (1 / 2)`
                 userTracker[sender].count = 0
             }
 
+            // ======================
             // ANTI LINK
+            // ======================
             if (isLink) {
 
                 await sock.sendMessage(from, {
@@ -343,34 +353,31 @@ Ketik angka (1 / 2)`
                 userTracker[sender].violations++
 
                 let namaUser = sender.split("@")[0]
-                let jumlah = userTracker[sender].violations
 
                 await sock.sendMessage(from, {
-                    text: `woy @${namaUser} asu, stop kirim link ya anak anj, Pelanggaran kamu sekarang:(${jumlah})`,
+                    text: `woy @${namaUser} asu, stop kirim link`,
                     mentions: [sender]
                 })
 
                 setResetTimer(sender, from)
             }
 
+            // ======================
             // AUTO KICK
+            // ======================
             if (userTracker[sender].violations >= 5) {
 
                 let namaUser = sender.split("@")[0]
 
                 await sock.sendMessage(from, {
-                    text: `@${namaUser} bye anak asu😹😹😹`,
+                    text: `@${namaUser} bye 😹`,
                     mentions: [sender]
                 })
 
                 try {
-
                     await sock.groupParticipantsUpdate(from, [sender], "remove")
-
                     delete userTracker[sender]
-
                 } catch (err) {
-                    console.log("❌ Bot bukan admin / gagal kick:", err)
                     setResetTimer(sender, from)
                 }
             }
