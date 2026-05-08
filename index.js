@@ -97,21 +97,26 @@ async function startBot() {
                 let namaUser = idUser.split("@")[0]
 
                 if (update.action === "add") {
+
                     await sock.sendMessage(update.id, {
-                        text: `👋 Welcome @${namaUser} to my group *${groupName}*`,
+                        text:
+`👋 Welcome @${namaUser} to my group *${groupName}*`,
                         mentions: [idUser]
                     })
                 }
 
                 if (update.action === "remove") {
+
                     await sock.sendMessage(update.id, {
-                        text: `Sayonara @${namaUser}👋`,
+                        text:
+`Sayonara @${namaUser}👋`,
                         mentions: [idUser]
                     })
                 }
             }
 
         } catch (err) {
+
             console.log("❌ Error group event:", err)
         }
     })
@@ -167,6 +172,7 @@ async function startBot() {
             const text =
                 msg.message.conversation ||
                 msg.message.extendedTextMessage?.text ||
+                msg.message.buttonsResponseMessage?.selectedButtonId ||
                 ""
 
             if (!from.endsWith("@g.us")) return
@@ -186,6 +192,7 @@ async function startBot() {
             // INIT MENU STATE
             // ======================
             if (!menuState[from]) {
+
                 menuState[from] = {
                     active: false,
                     admin: null
@@ -205,11 +212,25 @@ async function startBot() {
                 }
 
                 await sock.sendMessage(from, {
-                    text:
-`📋 MENU BOT
-
-1. INFO BOT
-2. ATURAN`
+                    text: "📋 MENU BOT",
+                    footer: "pilih menu anak asu 😹",
+                    buttons: [
+                        {
+                            buttonId: "1",
+                            buttonText: {
+                                displayText: "INFO BOT"
+                            },
+                            type: 1
+                        },
+                        {
+                            buttonId: "2",
+                            buttonText: {
+                                displayText: "ATURAN"
+                            },
+                            type: 1
+                        }
+                    ],
+                    headerType: 1
                 })
 
                 return
@@ -225,7 +246,12 @@ async function startBot() {
                 if (text === "1") {
 
                     await sock.sendMessage(from, {
-                        text: "🤖 Ini adalah bot WhatsApp anti spam + anti link"
+                        text:
+`🤖 INFO BOT
+
+• Bot anti link
+• Bot anti spam sticker
+• Auto kick member bangsat 😹`
                     })
 
                     delete menuState[from]
@@ -238,9 +264,9 @@ async function startBot() {
                         text:
 `📜 ATURAN GROUP
 
-• Jangan spam sticker
-• Jangan kirim link
-• Hormati member lain`
+• Jangan spam sticker anak anj
+• Jangan kirim link asu
+• Hormati member lain 😹`
                     })
 
                     delete menuState[from]
@@ -256,8 +282,10 @@ async function startBot() {
                 try {
 
                     if (!isAdmin) {
+
                         return sock.sendMessage(from, {
-                            text: "❌ Perintah ini hanya untuk admin"
+                            text:
+"❌ Perintah ini hanya untuk admin"
                         })
                     }
 
@@ -279,6 +307,7 @@ async function startBot() {
                     })
 
                 } catch (err) {
+
                     console.log("❌ Error absen:", err)
                 }
 
@@ -292,11 +321,14 @@ async function startBot() {
 
                 if (text.startsWith(".set ")) {
 
-                    const autoText = text.replace(".set ", "").trim()
+                    const autoText =
+                        text.replace(".set ", "").trim()
 
                     if (autoChats[autoText]) {
+
                         return sock.sendMessage(from, {
-                            text: `"${autoText}" sudah aktif`
+                            text:
+`"${autoText}" sudah aktif`
                         })
                     }
 
@@ -317,11 +349,14 @@ async function startBot() {
 
                 if (text.startsWith(".no set ")) {
 
-                    const removeText = text.replace(".no set ", "").trim()
+                    const removeText =
+                        text.replace(".no set ", "").trim()
 
                     if (!autoChats[removeText]) {
+
                         return sock.sendMessage(from, {
-                            text: `"${removeText}" tidak ditemukan`
+                            text:
+`"${removeText}" tidak ditemukan`
                         })
                     }
 
@@ -329,7 +364,8 @@ async function startBot() {
                     delete autoChats[removeText]
 
                     await sock.sendMessage(from, {
-                        text: `"${removeText}" berhasil dimatikan`
+                        text:
+`"${removeText}" berhasil dimatikan`
                     })
                 }
             }
@@ -350,7 +386,8 @@ async function startBot() {
             // ======================
             // DETECT
             // ======================
-            const isSticker = !!msg.message.stickerMessage
+            const isSticker =
+                !!msg.message.stickerMessage
 
             const isLink =
                 text.includes("http://") ||
@@ -364,7 +401,12 @@ async function startBot() {
 
                 const now = Date.now()
 
-                if (now - userTracker[sender].lastSticker > 30000) {
+                if (
+                    now -
+                    userTracker[sender].lastSticker >
+                    30000
+                ) {
+
                     userTracker[sender].count = 0
                 }
 
@@ -376,8 +418,11 @@ async function startBot() {
                     userTracker[sender].count = 0
                     userTracker[sender].violations++
 
-                    let namaUser = sender.split("@")[0]
-                    let jumlah = userTracker[sender].violations
+                    let namaUser =
+                        sender.split("@")[0]
+
+                    let jumlah =
+                        userTracker[sender].violations
 
                     await sock.sendMessage(from, {
                         text:
@@ -404,8 +449,11 @@ async function startBot() {
 
                 userTracker[sender].violations++
 
-                let namaUser = sender.split("@")[0]
-                let jumlah = userTracker[sender].violations
+                let namaUser =
+                    sender.split("@")[0]
+
+                let jumlah =
+                    userTracker[sender].violations
 
                 await sock.sendMessage(from, {
                     text:
@@ -419,9 +467,12 @@ async function startBot() {
             // ======================
             // AUTO KICK
             // ======================
-            if (userTracker[sender].violations >= 5) {
+            if (
+                userTracker[sender].violations >= 5
+            ) {
 
-                let namaUser = sender.split("@")[0]
+                let namaUser =
+                    sender.split("@")[0]
 
                 await sock.sendMessage(from, {
                     text:
@@ -441,13 +492,17 @@ async function startBot() {
 
                 } catch (err) {
 
-                    console.log("❌ Bot bukan admin / gagal kick:", err)
+                    console.log(
+                        "❌ Bot bukan admin / gagal kick:",
+                        err
+                    )
 
                     setResetTimer(sender, from)
                 }
             }
 
         } catch (err) {
+
             console.log("❌ Error:", err)
         }
     })
