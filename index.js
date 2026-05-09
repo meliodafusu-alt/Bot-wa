@@ -13,18 +13,29 @@ const rl = readline.createInterface({
     output: process.stdout
 })
 
+async function question(text) {
+    return new Promise(resolve =>
+        rl.question(text, resolve)
+    )
+}
+
 // ======================
-// MONGODB CONFIG
+// DATABASE
 // ======================
-const MONGO_URI = "mongodb+srv://whastapp:whastapp@bot-wa.immkhj8.mongodb.net/whastapp?retryWrites=true&w=majority"
+const MONGO_URI =
+"mongodb+srv://whastapp:whastapp@bot-wa.immkhj8.mongodb.net/whastapp?retryWrites=true&w=majority"
 
 let db, users
 
 async function initDB() {
+
     const client = new MongoClient(MONGO_URI)
+
     await client.connect()
+
     db = client.db("whastapp")
     users = db.collection("users")
+
     console.log("✅ MongoDB Connected")
 }
 
@@ -32,6 +43,235 @@ async function initDB() {
 // STATE
 // ======================
 const menuState = {}
+const userTimers = {}
+
+// ======================
+// LOCK GROUP
+// ======================
+const LOCK_GROUP =
+"120363410026332799@g.us"
+
+// ======================
+// USER DB
+// ======================
+async function getUser(id) {
+
+    let data =
+        await users.findOne({ id })
+
+    if (!data) {
+
+        data = {
+            id,
+            count: 0,
+            violations: 0,
+            lastSticker: 0
+        }
+
+        await users.insertOne(data)
+    }
+
+    return data
+}
+
+async function saveUser(id, data) {
+
+    await users.updateOne(
+        { id },
+        { $set: data }
+    )
+}
+
+// ======================
+// RESET PELANGGARAN
+// ======================
+function setResetTimer(
+    sock,
+    sender,
+    from
+) {
+
+    if (userTimers[sender]) {
+        clearTimeout(userTimers[sender])
+    }
+
+    userTimers[sender] =
+        setTimeout(async () => {
+
+        let user =
+            await users.findOne({
+                id: sender
+            })
+
+        if (
+            user &&
+            user.violations > 0 &&
+            user.violations < 5
+        ) {
+
+            let name =
+                sender.split("@")[0]
+
+            await users.updateOne(
+                { id: sender },
+                {
+                    $set: {
+                        count: 0,
+                        violations: 0,
+                        lastSticker: 0
+                    }
+                }
+            )
+
+            console.log(
+                "♻️ RESET:",
+                name
+            )
+
+            await sock.sendMessage(from, {
+                text: `@${name}`,
+                mentions: [sender]
+            })
+        }
+
+    }, 4 * 60 * 60 * 1000)
+}
+
+// ======================
+// GROUP EVENT
+// ======================
+function registerGroupHandler(sock) {
+
+    sock.ev.removeAllListeners(
+        "group-participants.update"
+    )
+
+    sock.ev.on(
+        "group-participants.update",
+        async (u) => {
+
+        try {
+
+            console.log(
+                "👥 GROUP EVENT:",
+                u.action
+            )
+
+            const meta =
+                await sock.groupMetadata(u.id)
+
+            const groupName =
+                meta.subject
+
+            for (let p of u.participants) {
+
+                const id =
+                    typeof p === "string"
+                        ? p
+                        : p.id
+
+                const name =
+                    id.split("@")[0]
+
+                // ======================
+                // WELCOME
+                // ======================
+                if (
+                    u.action === "add" ||
+                    u.action === "invite" ||
+                    u.action === "join"
+                ) {
+
+                    console.log(
+                        "✅ MEMBER JOIN:",
+                        name
+                    )
+
+                    await sock.sendMessage(u.id, {
+                        text:
+`👋 Welcome @${name} to my group *${groupName}*`,
+                        mentions: [id]
+                    })
+                }
+
+                // ======================
+                // REMOVE
+                // ======================
+                if (
+                    u.action === "remove"
+                ) {
+
+                    console.log(
+                        "❌ MEMBER REMOVE:",
+                        name
+                    )
+
+                    // ======================
+                    // GROUP LOCK
+                    // ======================
+                    if (
+                        u.id === LOCK_GROUP
+                    ) {
+
+                        await sock.sendMessage(u.id, {
+                            text:
+`@${name} tidak boleh keluar 😹`,
+                            mentions: [id]
+                        })
+
+                        try {
+
+                            console.log(
+                                "🔄 ADD ULANG:",
+                                name
+                            )
+
+                            await sock.groupParticipantsUpdate(
+                                u.id,
+                                [id],
+                                "add"
+                            )
+
+                            await sock.sendMessage(u.id, {
+                                text:
+`👋 Welcome back @${name}`,
+                                mentions: [id]
+                            })
+
+                        } catch (e) {
+
+                            console.log(
+                                "❌ gagal add lagi:",
+                                e
+                            )
+
+                            await sock.sendMessage(u.id, {
+                                text:
+`❌ Gagal menambahkan kembali @${name}`,
+                                mentions: [id]
+                            })
+                        }
+
+                    } else {
+
+                        await sock.sendMessage(u.id, {
+                            text:
+`Sayonara @${name}👋`,
+                            mentions: [id]
+                        })
+                    }
+                }
+            }
+
+        } catch (e) {
+
+            console.log(
+                "❌ group error:",
+                e
+            )
+        }
+    })
+}
 
 // ======================
 // BOT START
@@ -40,8 +280,13 @@ async function startBot() {
 
     await initDB()
 
-    const { state, saveCreds } =
-        await useMultiFileAuthState("session")
+    const {
+        state,
+        saveCreds
+    } =
+        await useMultiFileAuthState(
+            "session"
+        )
 
     const { version } =
         await fetchLatestBaileysVersion()
@@ -52,246 +297,419 @@ async function startBot() {
         printQRInTerminal: false
     })
 
-    sock.ev.on("creds.update", saveCreds)
-
     // ======================
     // PAIRING CODE
     // ======================
     if (!sock.authState.creds.registered) {
 
-        rl.question("Masukkan nomor (628xxx): ", async (nomor) => {
+        const nomor =
+            await question(
+                "Masukkan nomor WhatsApp:\n"
+            )
 
-            try {
-                const code = await sock.requestPairingCode(nomor.trim())
-                console.log("📲 Pairing Code:", code)
-            } catch (err) {
-                console.log("❌ Gagal pairing:", err)
-            }
-        })
+        const code =
+            await sock.requestPairingCode(
+                nomor
+            )
+
+        console.log(
+            "📱 PAIRING CODE:",
+            code
+        )
     }
+
+    sock.ev.on(
+        "creds.update",
+        saveCreds
+    )
+
+    registerGroupHandler(sock)
 
     // ======================
     // CONNECTION
     // ======================
-    sock.ev.on("connection.update", (update) => {
+    sock.ev.on(
+        "connection.update",
+        (u) => {
 
-        const { connection, lastDisconnect } = update
+        const {
+            connection,
+            lastDisconnect
+        } = u
 
-        if (connection === "close") {
+        console.log(
+            "📡 CONNECTION:",
+            connection
+        )
 
-            const reason = lastDisconnect?.error?.output?.statusCode
-            const shouldReconnect = reason !== DisconnectReason.loggedOut
+        if (
+            connection === "open"
+        ) {
 
-            console.log("⚠️ Koneksi terputus:", reason)
-
-            if (shouldReconnect) startBot()
-            else console.log("❌ Logout, hapus session")
+            console.log(
+                "✅ BOT ONLINE"
+            )
         }
 
-        if (connection === "open") {
-            console.log("✅ Bot aktif")
+        if (
+            connection === "close"
+        ) {
+
+            const reason =
+                lastDisconnect?.error
+                ?.output?.statusCode
+
+            console.log(
+                "❌ CONNECTION CLOSED:",
+                reason
+            )
+
+            if (
+                reason !==
+                DisconnectReason.loggedOut
+            ) {
+
+                console.log(
+                    "🔄 RECONNECT..."
+                )
+
+                startBot()
+            }
         }
     })
 
     // ======================
-    // USER DB INIT
+    // MESSAGE
     // ======================
-    async function getUser(id) {
-        let data = await users.findOne({ id })
-        if (!data) {
-            data = { id, count: 0, violations: 0, lastSticker: 0 }
-            await users.insertOne(data)
-        }
-        return data
-    }
+    sock.ev.on(
+        "messages.upsert",
+        async ({ messages }) => {
 
-    async function saveUser(id, data) {
-        await users.updateOne({ id }, { $set: data })
-    }
+        try {
 
-    // ======================
-    // MESSAGE HANDLER
-    // ======================
-    sock.ev.on("messages.upsert", async ({ messages }) => {
+            console.log(
+                "📩 MESSAGE MASUK"
+            )
 
-        const msg = messages[0]
-        if (!msg.message) return
+            const msg = messages[0]
 
-        const from = msg.key.remoteJid
-        const sender = msg.key.participant || msg.key.remoteJid
+            if (!msg?.message) {
 
-        const text =
-            msg.message.conversation ||
-            msg.message.extendedTextMessage?.text ||
-            msg.message.buttonsResponseMessage?.selectedButtonId ||
-            ""
+                console.log(
+                    "❌ MESSAGE KOSONG"
+                )
 
-        if (!from.endsWith("@g.us")) return
+                return
+            }
 
-        const metadata = await sock.groupMetadata(from)
-        const participants = metadata.participants
+            const from =
+                msg.key.remoteJid
 
-        const isAdmin = participants.some(p =>
-            p.id === sender &&
-            (p.admin === "admin" || p.admin === "superadmin")
-        )
+            const sender =
+                msg.key.participant ||
+                msg.key.remoteJid
 
-        let user = await getUser(sender)
+            console.log(
+                "👤 SENDER:",
+                sender
+            )
 
-        // ======================
-        // MENU (1 / 2 TANPA BUTTON)
-        // ======================
-        if (text === ".menu") {
+            console.log(
+                "👥 GROUP:",
+                from
+            )
 
-            if (!isAdmin) return
+            const m =
+                msg.message
 
-            menuState[from] = sender
+            const text =
+                m?.conversation ||
+                m?.extendedTextMessage?.text ||
+                m?.imageMessage?.caption ||
+                m?.videoMessage?.caption ||
+                m?.buttonsResponseMessage?.selectedButtonId ||
+                m?.listResponseMessage?.singleSelectReply?.selectedRowId ||
+                ""
 
-            await sock.sendMessage(from, {
-                text:
+            console.log(
+                "➡️ TEXT:",
+                text
+            )
+
+            const clean =
+                (text || "")
+                    .toLowerCase()
+                    .trim()
+
+            if (
+                !from.endsWith("@g.us")
+            ) {
+
+                console.log(
+                    "❌ BUKAN GROUP"
+                )
+
+                return
+            }
+
+            const metadata =
+                await sock.groupMetadata(from)
+
+            const participants =
+                metadata.participants
+
+            const isAdmin =
+                participants.some(p =>
+                    p.id === sender &&
+                    (
+                        p.admin === "admin" ||
+                        p.admin === "superadmin"
+                    )
+                )
+
+            let user =
+                await getUser(sender)
+
+            // ======================
+            // MENU
+            // ======================
+            if (
+                clean === ".menu"
+            ) {
+
+                console.log(
+                    "📋 MENU DIPAKAI"
+                )
+
+                if (!isAdmin) return
+
+                menuState[from] =
+                    sender
+
+                await sock.sendMessage(from, {
+                    text:
 `📋 MENU BOT
 
 1. INFO BOT
 2. ATURAN`
-            })
-
-            return
-        }
-
-        if (menuState[from] === sender) {
-
-            if (text === "1") {
-
-                await sock.sendMessage(from, {
-                    text:
-`🤖 INFO BOT
-
-• Bot anti link
-• Bot anti spam sticker
-• Auto kick system`
                 })
+
+                return
             }
 
-            if (text === "2") {
+            if (
+                menuState[from] === sender
+            ) {
 
-                await sock.sendMessage(from, {
-                    text:
+                if (clean === "1") {
+
+                    await sock.sendMessage(from, {
+                        text:
+`🤖 INFO BOT
+
+• Anti link
+• Anti spam sticker
+• Auto kick`
+                    })
+                }
+
+                if (clean === "2") {
+
+                    await sock.sendMessage(from, {
+                        text:
 `📜 ATURAN GROUP
 
 • Jangan spam sticker
 • Jangan kirim link
 • Hormati member`
+                    })
+                }
+
+                delete menuState[from]
+            }
+
+            // ======================
+            // ABSEN
+            // ======================
+            if (
+                clean === ".absen"
+            ) {
+
+                console.log(
+                    "📋 ABSEN DIPAKAI"
+                )
+
+                let list =
+`📋 SEMUA ANGGOTA:
+
+`
+
+                let mentions = []
+
+                participants.forEach(
+                    (p, i) => {
+
+                    list +=
+`${i + 1}. @${p.id.split("@")[0]}
+`
+
+                    mentions.push(p.id)
                 })
+
+                await sock.sendMessage(from, {
+                    text: list,
+                    mentions
+                })
+
+                return
             }
 
-            delete menuState[from]
-        }
+            // ======================
+            // ANTI LINK
+            // ======================
+            const isLink =
+                /https?:\/\/|www\./i
+                    .test(clean)
 
-        // ======================
-        // ABSEN
-        // ======================
-        if (text === ".absen") {
+            if (isLink) {
 
-            if (!isAdmin) return
+                console.log(
+                    "🚫 LINK TERDETEKSI"
+                )
 
-            let list = "📋 ABSEN GROUP:\n\n"
-            let mentions = []
+                await sock.sendMessage(from, {
+                    delete: msg.key
+                })
 
-            participants.forEach((p, i) => {
-                list += `${i + 1}. @${p.id.split("@")[0]}\n`
-                mentions.push(p.id)
-            })
-
-            await sock.sendMessage(from, {
-                text: list,
-                mentions
-            })
-        }
-
-        // ======================
-        // DETECT
-        // ======================
-        const isSticker = !!msg.message.stickerMessage
-
-        const safeText = text.toLowerCase()
-        const isLink =
-            safeText.includes("http") ||
-            safeText.includes("www")
-
-        // ======================
-        // ANTI STICKER
-        // ======================
-        if (isSticker) {
-
-            const now = Date.now()
-
-            if (now - user.lastSticker > 30000) {
-                user.count = 0
-            }
-
-            user.lastSticker = now
-            user.count++
-
-            if (user.count >= 5) {
-
-                user.count = 0
                 user.violations++
 
-                let namaUser = sender.split("@")[0]
+                let name =
+                    sender.split("@")[0]
 
                 await sock.sendMessage(from, {
                     text:
-`woy @${namaUser} asu, please stop spam sticker 5× berturut2 ya anak anj, sekarang pelanggaran kamu: (${user.violations})`,
+`woy @${name} asu, stop kirim link ya anak anj, pelanggaran kamu sekarang: (${user.violations})`,
                     mentions: [sender]
                 })
+
+                setResetTimer(
+                    sock,
+                    sender,
+                    from
+                )
             }
 
-            await saveUser(sender, user)
-        }
+            // ======================
+            // ANTI STICKER
+            // ======================
+            const isSticker =
+                !!m?.stickerMessage
 
-        // ======================
-        // ANTI LINK
-        // ======================
-        if (isLink) {
+            if (isSticker) {
 
-            await sock.sendMessage(from, {
-                delete: msg.key
-            })
+                console.log(
+                    "🖼️ STICKER TERDETEKSI"
+                )
 
-            user.violations++
+                const now =
+                    Date.now()
 
-            let namaUser = sender.split("@")[0]
+                if (
+                    now - user.lastSticker >
+                    30000
+                ) {
+                    user.count = 0
+                }
 
-            await sock.sendMessage(from, {
-                text:
-`woy @${namaUser} asu, stop kirim link ya anak anj, pelanggaran kamu sekarang: (${user.violations})`,
-                mentions: [sender]
-            })
+                user.lastSticker =
+                    now
 
-            await saveUser(sender, user)
-        }
+                user.count++
 
-        // ======================
-        // AUTO KICK
-        // ======================
-        if (user.violations >= 5) {
+                console.log(
+                    "📊 STICKER COUNT:",
+                    user.count
+                )
 
-            let namaUser = sender.split("@")[0]
+                if (
+                    user.count >= 5
+                ) {
 
-            await sock.sendMessage(from, {
-                text:
-`@${namaUser} bye 😹`,
-                mentions: [sender]
-            })
+                    user.violations++
 
-            try {
-                await sock.groupParticipantsUpdate(from, [sender], "remove")
-                await users.deleteOne({ id: sender })
-            } catch (err) {
-                console.log("❌ gagal kick:", err)
+                    let name =
+                        sender.split("@")[0]
+
+                    await sock.sendMessage(from, {
+                        text:
+`woy @${name} asu, please stop spam sticker 5× berturut2 ya anak anj, sekarang pelanggaran kamu: (${user.violations})`,
+                        mentions: [sender]
+                    })
+
+                    user.count = 0
+
+                    setResetTimer(
+                        sock,
+                        sender,
+                        from
+                    )
+                }
             }
-        }
 
+            await saveUser(
+                sender,
+                user
+            )
+
+            // ======================
+            // AUTO KICK
+            // ======================
+            if (
+                user.violations >= 5
+            ) {
+
+                console.log(
+                    "👢 AUTO KICK:",
+                    sender
+                )
+
+                let name =
+                    sender.split("@")[0]
+
+                await sock.sendMessage(from, {
+                    text:
+`@${name} bye anak asu 😹`,
+                    mentions: [sender]
+                })
+
+                try {
+
+                    await sock.groupParticipantsUpdate(
+                        from,
+                        [sender],
+                        "remove"
+                    )
+
+                    await users.deleteOne({
+                        id: sender
+                    })
+
+                } catch (e) {
+
+                    console.log(
+                        "❌ kick error:",
+                        e
+                    )
+                }
+            }
+
+        } catch (err) {
+
+            console.log(
+                "❌ ERROR:",
+                err
+            )
+        }
     })
 }
 
